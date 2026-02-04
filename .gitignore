@@ -1,0 +1,16 @@
+# Build artifacts
+smoke
+*.fasl
+*.lx64fsl
+*.dx64fsl
+*.o
+*.so
+*.core
+
+# Smoke state
+.smoke/
+
+# Editor
+*~
+\#*\#
+.DS_Store

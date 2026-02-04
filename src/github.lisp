@@ -70,6 +70,10 @@
   "Change the base branch of a PR."
   (run-gh "pr" "edit" (princ-to-string pr-number) "--base" new-base))
 
+(defun gh-pr-reopen (pr-number)
+  "Reopen a closed PR."
+  (run-gh "pr" "reopen" (princ-to-string pr-number)))
+
 (defun pr-state (pr-number)
   "Return PR state: :open, :merged, :closed, or nil on error."
   (let ((pr (ignore-errors (gh-pr-view pr-number))))

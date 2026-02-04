@@ -50,15 +50,12 @@
 
     (format t "Pushing stack of ~D commit~:P...~%~%" (length commits))
 
-    ;; For each commit, create a branch and PR
+    ;; For each commit, create a branch and PR (all PRs base on main)
     (loop for commit in commits
           for i from 0
           for patch-id = (getf commit :patch-id)
           for existing-pr = (find-pr-for-patch-id state patch-id)
           for branch-name = (smoke-branch-name patch-id)
-          for base = (if (zerop i)
-                         main
-                         (smoke-branch-name (getf (nth (1- i) commits) :patch-id)))
           do
              ;; Create/update the branch pointing to this commit
              (create-branch branch-name (getf commit :hash))
@@ -66,41 +63,32 @@
 
              (let ((pr-st (when existing-pr (pr-state existing-pr))))
                (cond
-                 ;; PR exists and is open - just update base
+                 ;; PR exists and is open - just update
                  ((eq pr-st :open)
                   (format t "  ~A ~A  PR #~D (updated)~%"
                           (getf commit :short)
                           (getf commit :subject)
-                          existing-pr)
-                  (ignore-errors (gh-pr-edit-base existing-pr base)))
+                          existing-pr))
 
-                 ;; PR exists but is closed - try to reopen, fall back to creating new
+                 ;; PR exists but is closed - try to reopen
                  ((eq pr-st :closed)
                   (format t "  ~A ~A  PR #~D (reopening)~%"
                           (getf commit :short)
                           (getf commit :subject)
                           existing-pr)
-                  (let ((reopened (ignore-errors (gh-pr-reopen existing-pr))))
-                    (if reopened
-                        (progn
-                          (ignore-errors (gh-pr-edit-base existing-pr base))
-                          (format t "    Reopened and updated base~%"))
-                        ;; Reopen failed - create new PR
-                        (let* ((is-draft (> i 0))
-                               (pr-num (gh-pr-create-simple
-                                        (getf commit :subject)
-                                        base
-                                        branch-name
-                                        :draft is-draft)))
-                          (format t "    Could not reopen, created PR #~D~%" pr-num)
-                          (setf state (update-state-mapping state patch-id pr-num))))))
+                  (handler-case
+                      (progn
+                        (gh-pr-reopen existing-pr)
+                        (format t "    Reopened~%"))
+                    (error ()
+                      (format t "    Could not reopen (may need manual intervention)~%"))))
 
                  ;; No existing PR - create new
                  (t
                   (let* ((is-draft (> i 0))
                          (pr-num (gh-pr-create-simple
                                   (getf commit :subject)
-                                  base
+                                  main  ; Always base on main
                                   branch-name
                                   :draft is-draft)))
                     (format t "  ~A ~A  PR #~D (created~A)~%"
@@ -180,28 +168,23 @@
                            (error ()
                              (format t "  PR #~D could not be reopened~%" pr)))))
 
-            ;; Update base branches and draft states
+            ;; Update draft states (all PRs already base on main)
             (format t "~%Updating PRs...~%")
             (loop for commit in commits
                   for i from 0
                   for patch-id = (getf commit :patch-id)
                   for pr = (find-pr-for-patch-id state patch-id)
-                  for base = (if (zerop i)
-                                 main
-                                 (smoke-branch-name (getf (nth (1- i) commits) :patch-id)))
                   when pr
                     do (let ((pr-st (pr-state pr)))
                          (when (eq pr-st :open)
-                           ;; Update base branch
-                           (ignore-errors (gh-pr-edit-base pr base))
-                           ;; Update draft state
+                           ;; Update draft state - only first PR is ready
                            (if (zerop i)
                                (progn
                                  (ignore-errors (gh-pr-ready pr))
-                                 (format t "  PR #~D ready (base: ~A)~%" pr base))
+                                 (format t "  PR #~D marked ready~%" pr))
                                (progn
                                  (ignore-errors (gh-pr-draft pr))
-                                 (format t "  PR #~D draft (base: ~A)~%" pr base))))))
+                                 (format t "  PR #~D marked draft~%" pr))))))
 
             ;; Check for commits without PRs
             (let ((missing-prs (loop for commit in commits

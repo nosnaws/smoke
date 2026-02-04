@@ -82,6 +82,18 @@ Each commit is a plist with :hash, :short, :subject, and :patch-id."
   "Force push with lease to BRANCH."
   (run-git "push" "--force-with-lease" "origin" branch))
 
+(defun push-force (branch)
+  "Force push to BRANCH. Use when branch may not exist on remote."
+  (run-git "push" "--force" "origin" branch))
+
+(defun safe-push-branch (branch)
+  "Push BRANCH to remote, handling both new and existing branches."
+  (handler-case
+      (push-force-with-lease branch)
+    (error ()
+      ;; If force-with-lease fails (branch doesn't exist), use regular force
+      (push-force branch))))
+
 (defun create-branch (name commit)
   "Create or update branch NAME pointing to COMMIT."
   (run-git "branch" "-f" name commit))

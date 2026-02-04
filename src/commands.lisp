@@ -64,36 +64,51 @@
              (create-branch branch-name (getf commit :hash))
              (safe-push-branch branch-name)
 
-             (if existing-pr
-                 ;; Check if PR needs to be reopened
-                 (let ((pr-st (pr-state existing-pr)))
-                   (when (eq pr-st :closed)
-                     (format t "  ~A ~A  PR #~D (reopening)~%"
-                             (getf commit :short)
-                             (getf commit :subject)
-                             existing-pr)
-                     (handler-case
-                         (gh-pr-reopen existing-pr)
-                       (error ()
-                         (format t "    Warning: could not reopen PR #~D~%" existing-pr))))
-                   (format t "  ~A ~A  PR #~D (updated)~%"
-                           (getf commit :short)
-                           (getf commit :subject)
-                           existing-pr)
-                   (ignore-errors (gh-pr-edit-base existing-pr base)))
-                 ;; Create new PR
-                 (let* ((is-draft (> i 0))
-                        (pr-num (gh-pr-create-simple
-                                 (getf commit :subject)
-                                 base
-                                 branch-name
-                                 :draft is-draft)))
-                   (format t "  ~A ~A  PR #~D (created~A)~%"
-                           (getf commit :short)
-                           (getf commit :subject)
-                           pr-num
-                           (if is-draft ", draft" ""))
-                   (setf state (update-state-mapping state patch-id pr-num)))))
+             (let ((pr-st (when existing-pr (pr-state existing-pr))))
+               (cond
+                 ;; PR exists and is open - just update base
+                 ((eq pr-st :open)
+                  (format t "  ~A ~A  PR #~D (updated)~%"
+                          (getf commit :short)
+                          (getf commit :subject)
+                          existing-pr)
+                  (ignore-errors (gh-pr-edit-base existing-pr base)))
+
+                 ;; PR exists but is closed - try to reopen, fall back to creating new
+                 ((eq pr-st :closed)
+                  (format t "  ~A ~A  PR #~D (reopening)~%"
+                          (getf commit :short)
+                          (getf commit :subject)
+                          existing-pr)
+                  (let ((reopened (ignore-errors (gh-pr-reopen existing-pr))))
+                    (if reopened
+                        (progn
+                          (ignore-errors (gh-pr-edit-base existing-pr base))
+                          (format t "    Reopened and updated base~%"))
+                        ;; Reopen failed - create new PR
+                        (let* ((is-draft (> i 0))
+                               (pr-num (gh-pr-create-simple
+                                        (getf commit :subject)
+                                        base
+                                        branch-name
+                                        :draft is-draft)))
+                          (format t "    Could not reopen, created PR #~D~%" pr-num)
+                          (setf state (update-state-mapping state patch-id pr-num))))))
+
+                 ;; No existing PR - create new
+                 (t
+                  (let* ((is-draft (> i 0))
+                         (pr-num (gh-pr-create-simple
+                                  (getf commit :subject)
+                                  base
+                                  branch-name
+                                  :draft is-draft)))
+                    (format t "  ~A ~A  PR #~D (created~A)~%"
+                            (getf commit :short)
+                            (getf commit :subject)
+                            pr-num
+                            (if is-draft ", draft" ""))
+                    (setf state (update-state-mapping state patch-id pr-num)))))))
 
     ;; Update state with current branch
     (setf state (list (cons :branch branch)

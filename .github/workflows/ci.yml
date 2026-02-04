@@ -30,11 +30,15 @@ jobs:
           curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
           sbcl --non-interactive \
             --load /tmp/quicklisp.lisp \
-            --eval '(quicklisp-quickstart:install)' \
-            --eval '(ql:add-to-init-file)'
+            --eval '(quicklisp-quickstart:install)'
 
       - name: Build
-        run: make build
+        run: |
+          sbcl --non-interactive \
+            --load ~/quicklisp/setup.lisp \
+            --eval '(push (truename ".") asdf:*central-registry*)' \
+            --eval '(ql:quickload (quote (:alexandria :serapeum :str :cl-json :cl-ppcre)) :silent t)' \
+            --load build.lisp
 
       - name: Test executable
         run: ./smoke help

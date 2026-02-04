@@ -52,14 +52,13 @@
 
     ;; For each commit, create a branch and PR
     (loop for commit in commits
-          for i from 1
-          for prev-commit = nil then commit
+          for i from 0
           for patch-id = (getf commit :patch-id)
           for existing-pr = (find-pr-for-patch-id state patch-id)
           for branch-name = (smoke-branch-name patch-id)
-          for base = (if (= i 1)
+          for base = (if (zerop i)
                          main
-                         (smoke-branch-name (getf prev-commit :patch-id)))
+                         (smoke-branch-name (getf (nth (1- i) commits) :patch-id)))
           do
              ;; Create/update the branch pointing to this commit
              (create-branch branch-name (getf commit :hash))
@@ -83,7 +82,7 @@
                            existing-pr)
                    (ignore-errors (gh-pr-edit-base existing-pr base)))
                  ;; Create new PR
-                 (let* ((is-draft (> i 1))
+                 (let* ((is-draft (> i 0))
                         (pr-num (gh-pr-create-simple
                                  (getf commit :subject)
                                  base
@@ -169,20 +168,19 @@
             ;; Update base branches and draft states
             (format t "~%Updating PRs...~%")
             (loop for commit in commits
-                  for i from 1
-                  for prev-commit = nil then commit
+                  for i from 0
                   for patch-id = (getf commit :patch-id)
                   for pr = (find-pr-for-patch-id state patch-id)
-                  for base = (if (= i 1)
+                  for base = (if (zerop i)
                                  main
-                                 (smoke-branch-name (getf prev-commit :patch-id)))
+                                 (smoke-branch-name (getf (nth (1- i) commits) :patch-id)))
                   when pr
                     do (let ((pr-st (pr-state pr)))
                          (when (eq pr-st :open)
                            ;; Update base branch
                            (ignore-errors (gh-pr-edit-base pr base))
                            ;; Update draft state
-                           (if (= i 1)
+                           (if (zerop i)
                                (progn
                                  (ignore-errors (gh-pr-ready pr))
                                  (format t "  PR #~D ready (base: ~A)~%" pr base))

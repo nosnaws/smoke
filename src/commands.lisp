@@ -96,30 +96,31 @@
     (format t "Fetching ~A...~%" main)
     (fetch-main)
 
-    ;; Check for merged PRs before rebase
+    ;; Check for merged and closed PRs before rebase
     (let ((stack (cdr (assoc :stack state)))
-          (merged-patch-ids nil))
+          (merged-patch-ids nil)
+          (closed-patch-ids nil))
+      ;; Detect merged and closed PRs
       (loop for entry in stack
             for pr = (cdr (assoc :pr entry))
             for patch-id = (cdr (assoc :patch--id entry))
-            when (and pr (pr-merged-p pr))
-              do (progn
-                   (format t "PR #~D merged.~%" pr)
-                   (push patch-id merged-patch-ids)
-                   ;; Clean up the smoke branch
-                   (let ((branch-name (loop for i from 1
-                                            for bn = (smoke-branch-name i)
-                                            ;; Find which branch this PR used
-                                            thereis (when (ignore-errors
-                                                            (let ((pr-info (gh-pr-view pr)))
-                                                              (string= (cdr (assoc :head-ref-name pr-info)) bn)))
-                                                      bn))))
-                     (when branch-name
-                       (ignore-errors (delete-remote-branch branch-name))))))
+            when pr
+              do (let ((pr-st (pr-state pr)))
+                   (cond
+                     ((eq pr-st :merged)
+                      (format t "PR #~D merged.~%" pr)
+                      (push patch-id merged-patch-ids))
+                     ((eq pr-st :closed)
+                      (format t "PR #~D was closed (will recreate on push).~%" pr)
+                      (push patch-id closed-patch-ids)))))
 
       ;; Remove merged PRs from state
       (when merged-patch-ids
-        (setf state (remove-merged-from-state state merged-patch-ids))))
+        (setf state (remove-merged-from-state state merged-patch-ids)))
+
+      ;; Remove closed PRs from state (they'll be recreated on next push)
+      (when closed-patch-ids
+        (setf state (remove-merged-from-state state closed-patch-ids))))
 
     ;; Rebase onto main
     (format t "Rebasing onto origin/~A...~%" main)
@@ -128,30 +129,45 @@
     ;; Get new commits after rebase
     (let ((commits (stack-commits)))
       (if (null commits)
-          (format t "Stack is empty - all PRs merged!~%")
+          (format t "~%Stack is empty - all PRs merged!~%")
           (progn
-            (format t "~%Updating PR draft states...~%")
-            ;; Update draft states: only first PR should be ready
-            (loop for commit in commits
-                  for i from 1
-                  for patch-id = (getf commit :patch-id)
-                  for pr = (find-pr-for-patch-id state patch-id)
-                  when pr
-                    do (if (= i 1)
-                           (progn
-                             (ignore-errors (gh-pr-ready pr))
-                             (format t "  PR #~D marked ready~%" pr))
-                           (progn
-                             (ignore-errors (gh-pr-draft pr))
-                             (format t "  PR #~D marked draft~%" pr))))
+            ;; Update draft states for remaining open PRs
+            (let ((has-open-prs nil))
+              (loop for commit in commits
+                    for i from 1
+                    for patch-id = (getf commit :patch-id)
+                    for pr = (find-pr-for-patch-id state patch-id)
+                    when (and pr (pr-open-p pr))
+                      do (setf has-open-prs t)
+                         (if (= i 1)
+                             (progn
+                               (ignore-errors (gh-pr-ready pr))
+                               (format t "  PR #~D marked ready~%" pr))
+                             (progn
+                               (ignore-errors (gh-pr-draft pr))
+                               (format t "  PR #~D marked draft~%" pr))))
+
+              (when has-open-prs
+                (format t "~%")))
 
             ;; Push updated branches
-            (format t "~%Pushing updated branches...~%")
+            (format t "Pushing updated branches...~%")
             (loop for commit in commits
                   for i from 1
                   for branch-name = (smoke-branch-name i)
                   do (create-branch branch-name (getf commit :hash))
-                     (push-force-with-lease branch-name)))))
+                     (safe-push-branch branch-name)
+                     (format t "  ~A -> ~A~%" (getf commit :short) branch-name))
+
+            ;; Remind user to push if there are commits without PRs
+            (let ((missing-prs (loop for commit in commits
+                                     for patch-id = (getf commit :patch-id)
+                                     unless (find-pr-for-patch-id state patch-id)
+                                       collect commit)))
+              (when missing-prs
+                (format t "~%~D commit~:P need~:[s~;~] PRs. Run 'smoke push' to create them.~%"
+                        (length missing-prs)
+                        (= (length missing-prs) 1)))))))
 
     (save-state state)
     (format t "~%Done.~%")))

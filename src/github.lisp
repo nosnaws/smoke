@@ -70,15 +70,34 @@
   "Change the base branch of a PR."
   (run-gh "pr" "edit" (princ-to-string pr-number) "--base" new-base))
 
+(defun pr-state (pr-number)
+  "Return PR state: :open, :merged, :closed, or nil on error."
+  (let ((pr (ignore-errors (gh-pr-view pr-number))))
+    (when pr
+      (let ((state (cdr (assoc :state pr))))
+        (cond
+          ((string= state "MERGED") :merged)
+          ((string= state "CLOSED") :closed)
+          ((string= state "OPEN") :open)
+          (t nil))))))
+
 (defun pr-merged-p (pr-number)
   "Return t if PR is merged."
-  (let ((pr (gh-pr-view pr-number)))
-    (string= (cdr (assoc :state pr)) "MERGED")))
+  (eq (pr-state pr-number) :merged))
+
+(defun pr-closed-p (pr-number)
+  "Return t if PR is closed (not merged)."
+  (eq (pr-state pr-number) :closed))
+
+(defun pr-open-p (pr-number)
+  "Return t if PR is open."
+  (eq (pr-state pr-number) :open))
 
 (defun pr-draft-p (pr-number)
   "Return t if PR is a draft."
-  (let ((pr (gh-pr-view pr-number)))
-    (cdr (assoc :is-draft pr))))
+  (let ((pr (ignore-errors (gh-pr-view pr-number))))
+    (when pr
+      (cdr (assoc :is-draft pr)))))
 
 (defun pr-ci-status (pr-number)
   "Return CI status for PR: :success, :failure, :pending, or :none."

@@ -56,10 +56,14 @@
                                      :output '(:string :stripped t)))))
     (first (str:words (str:trim result)))))
 
+(defun remote-main-branch ()
+  "Return the remote main branch ref (origin/main or origin/master)."
+  (format nil "origin/~A" (main-branch)))
+
 (defun stack-commits ()
   "Return list of commits in the current stack (oldest first).
 Each commit is a plist with :hash, :short, :subject, and :patch-id."
-  (let* ((base (merge-base (main-branch)))
+  (let* ((base (merge-base (remote-main-branch)))
          (commits (commits-since base)))
     (mapcar (lambda (hash)
               (list :hash hash
@@ -81,6 +85,18 @@ Each commit is a plist with :hash, :short, :subject, and :patch-id."
 (defun push-force-with-lease (branch)
   "Force push with lease to BRANCH."
   (run-git "push" "--force-with-lease" "origin" branch))
+
+(defun push-force (branch)
+  "Force push to BRANCH. Use when branch may not exist on remote."
+  (run-git "push" "--force" "origin" branch))
+
+(defun safe-push-branch (branch)
+  "Push BRANCH to remote, handling both new and existing branches."
+  (handler-case
+      (push-force-with-lease branch)
+    (error ()
+      ;; If force-with-lease fails (branch doesn't exist), use regular force
+      (push-force branch))))
 
 (defun create-branch (name commit)
   "Create or update branch NAME pointing to COMMIT."

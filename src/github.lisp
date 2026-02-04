@@ -70,6 +70,10 @@
   "Change the base branch of a PR."
   (run-gh "pr" "edit" (princ-to-string pr-number) "--base" new-base))
 
+(defun gh-pr-reopen (pr-number)
+  "Reopen a closed PR."
+  (run-gh "pr" "reopen" (princ-to-string pr-number)))
+
 (defun pr-state (pr-number)
   "Return PR state: :open, :merged, :closed, or nil on error."
   (let ((pr (ignore-errors (gh-pr-view pr-number))))
@@ -122,6 +126,7 @@
     (:pending "○")
     (:none "-")))
 
-(defun smoke-branch-name (position)
-  "Generate smoke branch name for stack position."
-  (format nil "smoke/~A/~D" (current-branch) position))
+(defun smoke-branch-name (patch-id)
+  "Generate smoke branch name for a commit's patch-id.
+Uses first 8 chars of patch-id for stability across rebases."
+  (format nil "smoke/~A/~A" (current-branch) (subseq patch-id 0 (min 8 (length patch-id)))))

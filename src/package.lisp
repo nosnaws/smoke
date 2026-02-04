@@ -7,4 +7,5 @@
            :status
            :push-stack
            :pull-stack
-           :amend-stack))
+           :amend-stack
+           :url-stack))

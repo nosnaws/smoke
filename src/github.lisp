@@ -22,7 +22,7 @@
 (defun gh-pr-view (pr-number)
   "Get PR details by number."
   (run-gh-json "pr" "view" (princ-to-string pr-number)
-               "--json" "number,title,headRefName,isDraft,state,mergeCommit,statusCheckRollup"))
+               "--json" "number,title,headRefName,isDraft,state,mergeCommit,statusCheckRollup,url"))
 
 (defun extract-pr-number (url)
   "Extract PR number from GitHub PR URL."
@@ -102,6 +102,12 @@
   (let ((pr (ignore-errors (gh-pr-view pr-number))))
     (when pr
       (cdr (assoc :is-draft pr)))))
+
+(defun gh-pr-url (pr-number)
+  "Get the URL for a PR."
+  (let ((pr (ignore-errors (gh-pr-view pr-number))))
+    (when pr
+      (cdr (assoc :url pr)))))
 
 (defun pr-ci-status (pr-number)
   "Return CI status for PR: :success, :failure, :pending, or :none."

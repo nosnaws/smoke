@@ -111,6 +111,16 @@ Each commit is a plist with :hash, :short, :subject, and :patch-id."
   "Fetch the main branch from origin."
   (run-git "fetch" "origin" (main-branch)))
 
+(defun repo-name ()
+  "Return the owner/repo name from the remote URL."
+  (let ((url (run-git "remote" "get-url" "origin")))
+    ;; Handle SSH (git@github.com:owner/repo.git) or HTTPS (https://github.com/owner/repo.git)
+    (multiple-value-bind (match groups)
+        (re:scan-to-strings "github\\.com[:/](.+?)(?:\\.git)?$" url)
+      (declare (ignore match))
+      (when groups
+        (str:replace-all ".git" "" (aref groups 0))))))
+
 (defun interactive-pick-commit (commits)
   "Let user pick a commit from COMMITS. Returns the selected commit plist."
   (format t "~%Select a commit to amend:~%~%")

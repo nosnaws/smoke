@@ -199,6 +199,42 @@
     (save-state state)
     (format t "~%Done.~%")))
 
+(defun url-stack (&optional position)
+  "Show PR URL(s). If POSITION given (1-indexed), show that commit's PR URL."
+  (let* ((commits (stack-commits))
+         (state (load-state)))
+    (when (null commits)
+      (format t "No commits in stack.~%")
+      (return-from url-stack))
+    (if position
+        ;; Show URL for specific position
+        (if (or (< position 1) (> position (length commits)))
+            (format t "Invalid position ~D. Stack has ~D commit~:P.~%"
+                    position (length commits))
+            (let* ((commit (nth (1- position) commits))
+                   (patch-id (getf commit :patch-id))
+                   (pr (find-pr-for-patch-id state patch-id)))
+              (if pr
+                  (let ((url (gh-pr-url pr)))
+                    (if url
+                        (format t "~A~%" url)
+                        (format t "https://github.com/~A/pull/~D~%"
+                                (repo-name) pr)))
+                  (format t "No PR for commit ~A (~A)~%"
+                          (getf commit :short) (getf commit :subject)))))
+        ;; Show all URLs
+        (loop for commit in commits
+              for i from 1
+              for patch-id = (getf commit :patch-id)
+              for pr = (find-pr-for-patch-id state patch-id)
+              do (if pr
+                     (let ((url (gh-pr-url pr)))
+                       (format t "~D. ~A ~A~%   ~A~%"
+                               i (getf commit :short) (getf commit :subject)
+                               (or url (format nil "PR #~D" pr))))
+                     (format t "~D. ~A ~A~%   (no PR)~%"
+                             i (getf commit :short) (getf commit :subject)))))))
+
 (defun amend-stack ()
   "Interactive amend: pick a commit to amend, then rebase."
   (let ((commits (stack-commits)))

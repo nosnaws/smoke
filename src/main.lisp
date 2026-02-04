@@ -10,6 +10,7 @@
   (format t "  smoke push    Create/update PRs for each commit~%")
   (format t "  smoke pull    Rebase onto main, update PRs~%")
   (format t "  smoke amend   Pick a commit to amend~%")
+  (format t "  smoke url [N] Show PR URL(s), optionally for stack position N~%")
   (format t "  smoke help    Show this help~%"))
 
 (defun main ()
@@ -25,6 +26,10 @@
            (pull-stack))
           ((string= (first args) "amend")
            (amend-stack))
+          ((string= (first args) "url")
+           (let ((pos (when (second args)
+                        (parse-integer (second args) :junk-allowed t))))
+             (url-stack pos)))
           ((or (string= (first args) "help")
                (string= (first args) "--help")
                (string= (first args) "-h"))

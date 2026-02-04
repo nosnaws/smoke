@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SBCL (Ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get update && sudo apt-get install -y sbcl
+
+      - name: Install SBCL (macOS)
+        if: matrix.os == 'macos-latest'
+        run: brew install sbcl
+
+      - name: Install Quicklisp
+        run: |
+          curl -o /tmp/quicklisp.lisp https://beta.quicklisp.org/quicklisp.lisp
+          sbcl --non-interactive \
+            --load /tmp/quicklisp.lisp \
+            --eval '(quicklisp-quickstart:install)' \
+            --eval '(ql:add-to-init-file)'
+
+      - name: Build
+        run: make build
+
+      - name: Test executable
+        run: ./smoke help
+
+      - name: Rename binary for release
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          if [[ "${{ matrix.os }}" == "ubuntu-latest" ]]; then
+            mv smoke smoke-linux-amd64
+          else
+            mv smoke smoke-darwin-amd64
+          fi
+
+      - name: Upload artifact
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ matrix.os }}
+          path: smoke-*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true

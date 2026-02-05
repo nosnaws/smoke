@@ -14,9 +14,7 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact: smoke-linux-amd64
-          - os: macos-13
-            artifact: smoke-darwin-amd64
-          - os: macos-14
+          - os: macos-latest
             artifact: smoke-darwin-arm64
     runs-on: ${{ matrix.os }}
 

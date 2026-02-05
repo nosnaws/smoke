@@ -16,4 +16,5 @@
                              (:file "state")
                              (:file "github")
                              (:file "commands")
-                             (:file "main")))))
+                             (:file "main"))))
+  :in-order-to ((test-op (test-op "smoke-test"))))

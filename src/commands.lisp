@@ -22,7 +22,7 @@
                               (pr-st (when pr-info
                                        (cdr (assoc :state pr-info))))
                               (draft (cdr (assoc :is-draft pr-info)))
-                              (ci (if pr-info (pr-ci-status pr) :none)))
+                              (ci (if pr-info (pr-ci-status-from-info pr-info) :none)))
                          (format t "  ~A ~A  PR #~D ~A ~A~%"
                                  (getf commit :short)
                                  (getf commit :subject)
@@ -96,7 +96,8 @@
                             (getf commit :subject)
                             pr-num
                             (if is-draft ", draft" ""))
-                    (setf state (update-state-mapping state patch-id pr-num)))))))
+                    (setf state (update-state-mapping state patch-id pr-num))
+                    (save-state state))))))
 
     ;; Update state with current branch
     (setf state (list (cons :branch branch)
@@ -139,7 +140,12 @@
 
     ;; Rebase onto main
     (format t "Rebasing onto origin/~A...~%" main)
-    (rebase-onto (format nil "origin/~A" main))
+    (handler-case
+        (rebase-onto (format nil "origin/~A" main))
+      (rebase-conflict (c)
+        (format t "~%~A~%" c)
+        (save-state state)
+        (return-from pull-stack)))
 
     ;; Get new commits after rebase
     (let ((commits (stack-commits)))

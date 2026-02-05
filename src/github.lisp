@@ -109,10 +109,10 @@
     (when pr
       (cdr (assoc :url pr)))))
 
-(defun pr-ci-status (pr-number)
-  "Return CI status for PR: :success, :failure, :pending, or :none."
-  (let* ((pr (gh-pr-view pr-number))
-         (checks (cdr (assoc :status-check-rollup pr))))
+(defun pr-ci-status-from-info (pr-info)
+  "Return CI status from an already-fetched PR info alist.
+Returns :success, :failure, :pending, or :none."
+  (let ((checks (cdr (assoc :status-check-rollup pr-info))))
     (cond
       ((null checks) :none)
       ((every (lambda (c) (string= (cdr (assoc :conclusion c)) "SUCCESS")) checks)
@@ -123,6 +123,10 @@
              checks)
        :failure)
       (t :pending))))
+
+(defun pr-ci-status (pr-number)
+  "Return CI status for PR: :success, :failure, :pending, or :none."
+  (pr-ci-status-from-info (gh-pr-view pr-number)))
 
 (defun format-ci-status (status)
   "Format CI status for display."

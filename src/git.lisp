@@ -78,9 +78,32 @@ Each commit is a plist with :hash, :short, :subject, and :patch-id."
     (unless (str:empty? status)
       (error "Working tree has uncommitted changes. Commit or stash them first."))))
 
+(define-condition rebase-conflict (error)
+  ((target :initarg :target
+           :reader rebase-conflict-target
+           :type string
+           :documentation "The rebase target ref."))
+  (:report (lambda (c stream)
+             (format stream "Rebase onto ~A has conflicts.~%~
+                             Resolve conflicts and run: git rebase --continue~%~
+                             Or abort the rebase with: git rebase --abort"
+                     (rebase-conflict-target c))))
+  (:documentation "Signaled when a rebase encounters conflicts."))
+
+(defun rebase-in-progress-p ()
+  "Return t if a rebase is currently in progress."
+  (let ((git-dir (run-git "rev-parse" "--git-dir")))
+    (uiop:file-exists-p (merge-pathnames "REBASE_HEAD" (uiop:parse-unix-namestring git-dir :ensure-directory t)))))
+
 (defun rebase-onto (target)
-  "Rebase the current branch onto TARGET."
-  (run-git "rebase" target))
+  "Rebase the current branch onto TARGET.
+Signals REBASE-CONFLICT if the rebase encounters conflicts."
+  (handler-case
+      (run-git "rebase" target)
+    (error ()
+      (if (rebase-in-progress-p)
+          (error 'rebase-conflict :target target)
+          (error "Rebase onto ~A failed." target)))))
 
 (defun push-force-with-lease (branch)
   "Force push with lease to BRANCH."

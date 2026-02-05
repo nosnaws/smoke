@@ -35,8 +35,8 @@ repl:
 test:
 	$(SBCL) --non-interactive \
 		--eval '(push (truename ".") asdf:*central-registry*)' \
-		--eval '(ql:quickload :smoke :silent t)' \
-		--eval '(format t "All systems loaded successfully.~%")'
+		--eval '(ql:quickload :smoke-test :silent t)' \
+		--eval '(unless (fiveam:run! (quote smoke-test::smoke-tests)) (uiop:quit 1))'
 
 #
 # Development commands - run smoke commands via eval

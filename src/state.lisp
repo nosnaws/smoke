@@ -25,31 +25,34 @@
     (when (uiop:file-exists-p path)
       (json:decode-json-from-source path))))
 
+(defun state-tmp-file ()
+  "Return the temporary state file path."
+  (merge-pathnames "state.json.tmp" (state-dir)))
+
 (defun save-state (state)
-  "Save STATE to .smoke/state.json."
+  "Save STATE to .smoke/state.json atomically via temp file + rename."
   (ensure-state-dir)
-  (with-open-file (out (state-file)
-                       :direction :output
-                       :if-exists :supersede)
-    (json:encode-json-plist-to-string
-     (list :branch (cdr (assoc :branch state))
-           :stack (cdr (assoc :stack state))))
-    ;; Write formatted JSON manually for readability
-    (format out "{~%")
-    (format out "  \"branch\": ~S,~%"
-            (cdr (assoc :branch state)))
-    (format out "  \"stack\": [~%")
-    (let ((stack (cdr (assoc :stack state))))
-      (loop for entry in stack
-            for i from 0
-            do (format out "    {\"patch_id\": ~S, \"pr\": ~D}"
-                       (cdr (assoc :patch--id entry))
-                       (cdr (assoc :pr entry)))
-            when (< i (1- (length stack)))
-              do (format out ",")
-            do (format out "~%")))
-    (format out "  ]~%")
-    (format out "}~%")))
+  (let ((tmp (state-tmp-file))
+        (target (state-file)))
+    (with-open-file (out tmp
+                         :direction :output
+                         :if-exists :supersede)
+      (format out "{~%")
+      (format out "  \"branch\": ~S,~%"
+              (cdr (assoc :branch state)))
+      (format out "  \"stack\": [~%")
+      (let ((stack (cdr (assoc :stack state))))
+        (loop for entry in stack
+              for i from 0
+              do (format out "    {\"patch_id\": ~S, \"pr\": ~D}"
+                         (cdr (assoc :patch--id entry))
+                         (cdr (assoc :pr entry)))
+              when (< i (1- (length stack)))
+                do (format out ",")
+              do (format out "~%")))
+      (format out "  ]~%")
+      (format out "}~%"))
+    (rename-file tmp target)))
 
 (defun find-pr-for-patch-id (state patch-id)
   "Find the PR number for PATCH-ID in STATE, or nil."

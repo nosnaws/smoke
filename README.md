@@ -50,13 +50,24 @@ State is stored in `.smoke/state.json`:
 
 Merged PRs are detected via `gh pr view --json state,mergeCommit`.
 
-## Requirements
+## Installation
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nosnaws/smoke/main/install.sh | bash
+```
+
+This downloads the latest release binary for your platform and installs it to `/usr/local/bin`. To install elsewhere:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nosnaws/smoke/main/install.sh | INSTALL_DIR=~/.local/bin bash
+```
+
+### Requirements
 
 - Git
 - GitHub CLI (`gh`) authenticated
-- SBCL (for building from source)
 
-## Building
+### Building from source
 
 ```bash
 sbcl --load build.lisp

@@ -136,7 +136,7 @@ Returns :success, :failure, :pending, or :none."
     (:pending "○")
     (:none "-")))
 
-(defun smoke-branch-name (patch-id)
-  "Generate smoke branch name for a commit's patch-id.
-Uses first 8 chars of patch-id for stability across rebases."
-  (format nil "smoke/~A/~A" (current-branch) (subseq patch-id 0 (min 8 (length patch-id)))))
+(defun smoke-branch-name (branch position)
+  "Generate smoke branch name for a commit at POSITION (1-indexed) on BRANCH.
+Uses zero-padded position for stability across amends."
+  (format nil "smoke/~A/~2,'0D" branch position))

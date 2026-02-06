@@ -1,7 +1,7 @@
 (defsystem "smoke"
   :author "Alec Swanson"
   :license "MIT"
-  :version "0.1.0"
+  :version "0.1.4"
   :description "CLI for managing stacked diffs with squash-merge workflows"
   :depends-on ("alexandria"
                "serapeum"

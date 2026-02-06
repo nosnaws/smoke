@@ -10,13 +10,12 @@
          (state (or (load-state) (init-state branch))))
     (if (null commits)
         (format t "No commits ahead of ~A~%" main)
-        (progn
+        (let ((reconciled (reconcile-stack commits state)))
           (format t "~%Stack on ~A (~D commit~:P ahead of ~A):~%~%"
                   branch (length commits) main)
-          (loop for commit in commits
-                for i from 1
-                for patch-id = (getf commit :patch-id)
-                for pr = (find-pr-for-patch-id state patch-id)
+          (loop for r in reconciled
+                for commit = (getf r :commit)
+                for pr = (getf r :pr)
                 do (if pr
                        (let* ((pr-info (ignore-errors (gh-pr-view pr)))
                               (pr-st (when pr-info
@@ -50,59 +49,72 @@
 
     (format t "Pushing stack of ~D commit~:P...~%~%" (length commits))
 
-    ;; For each commit, create a branch and PR (all PRs base on main)
-    (loop for commit in commits
-          for i from 0
-          for patch-id = (getf commit :patch-id)
-          for existing-pr = (find-pr-for-patch-id state patch-id)
-          for branch-name = (smoke-branch-name patch-id)
-          do
-             ;; Create/update the branch pointing to this commit
-             (create-branch branch-name (getf commit :hash))
-             (safe-push-branch branch-name)
+    (multiple-value-bind (reconciled orphans) (reconcile-stack commits state)
+      ;; For each reconciled commit, create a branch and PR
+      (loop for r in reconciled
+            for i from 0
+            for commit = (getf r :commit)
+            for patch-id = (getf r :patch-id)
+            for existing-pr = (getf r :pr)
+            for position = (getf r :position)
+            for branch-name = (or (getf r :branch)
+                                  (smoke-branch-name branch position))
+            do
+               ;; Store branch name back into reconciled result
+               (setf (getf r :branch) branch-name)
 
-             (let ((pr-st (when existing-pr (pr-state existing-pr))))
-               (cond
-                 ;; PR exists and is open - just update
-                 ((eq pr-st :open)
-                  (format t "  ~A ~A  PR #~D (updated)~%"
-                          (getf commit :short)
-                          (getf commit :subject)
-                          existing-pr))
+               ;; Create/update the branch pointing to this commit
+               (create-branch branch-name (getf commit :hash))
+               (safe-push-branch branch-name)
 
-                 ;; PR exists but is closed - try to reopen
-                 ((eq pr-st :closed)
-                  (format t "  ~A ~A  PR #~D (reopening)~%"
-                          (getf commit :short)
-                          (getf commit :subject)
-                          existing-pr)
-                  (handler-case
-                      (progn
-                        (gh-pr-reopen existing-pr)
-                        (format t "    Reopened~%"))
-                    (error ()
-                      (format t "    Could not reopen (may need manual intervention)~%"))))
-
-                 ;; No existing PR - create new
-                 (t
-                  (let* ((is-draft (> i 0))
-                         (pr-num (gh-pr-create-simple
-                                  (getf commit :subject)
-                                  main  ; Always base on main
-                                  branch-name
-                                  :draft is-draft)))
-                    (format t "  ~A ~A  PR #~D (created~A)~%"
+               (let ((pr-st (when existing-pr (pr-state existing-pr))))
+                 (cond
+                   ;; PR exists and is open - just update
+                   ((eq pr-st :open)
+                    (format t "  ~A ~A  PR #~D (updated)~%"
                             (getf commit :short)
                             (getf commit :subject)
-                            pr-num
-                            (if is-draft ", draft" ""))
-                    (setf state (update-state-mapping state patch-id pr-num))
-                    (save-state state))))))
+                            existing-pr))
 
-    ;; Update state with current branch
-    (setf state (list (cons :branch branch)
-                      (cons :stack (cdr (assoc :stack state)))))
-    (save-state state)
+                   ;; PR exists but is closed - try to reopen
+                   ((eq pr-st :closed)
+                    (format t "  ~A ~A  PR #~D (reopening)~%"
+                            (getf commit :short)
+                            (getf commit :subject)
+                            existing-pr)
+                    (handler-case
+                        (progn
+                          (gh-pr-reopen existing-pr)
+                          (format t "    Reopened~%"))
+                      (error ()
+                        (format t "    Could not reopen (may need manual intervention)~%"))))
+
+                   ;; No existing PR - create new
+                   (t
+                    (let* ((is-draft (> i 0))
+                           (pr-num (gh-pr-create-simple
+                                    (getf commit :subject)
+                                    main
+                                    branch-name
+                                    :draft is-draft)))
+                      (format t "  ~A ~A  PR #~D (created~A)~%"
+                              (getf commit :short)
+                              (getf commit :subject)
+                              pr-num
+                              (if is-draft ", draft" ""))
+                      (setf (getf r :pr) pr-num))))))
+
+      ;; Clean up orphan branches
+      (loop for orphan in orphans
+            for orphan-branch = (cdr (assoc :smoke--branch orphan))
+            when orphan-branch
+              do (format t "  Cleaning up orphan branch ~A~%" orphan-branch)
+                 (delete-remote-branch orphan-branch))
+
+      ;; Build and save new state
+      (let ((new-state (build-state-from-reconciliation branch reconciled)))
+        (save-state new-state)))
+
     (format t "~%Done.~%")))
 
 (defun pull-stack ()
@@ -147,17 +159,20 @@
         (save-state state)
         (return-from pull-stack)))
 
-    ;; Get new commits after rebase
+    ;; Get new commits after rebase and reconcile
     (let ((commits (stack-commits)))
       (if (null commits)
           (format t "~%Stack is empty - all PRs merged!~%")
-          (progn
-            ;; Push updated branches first (needed before reopening PRs)
+          (let ((reconciled (reconcile-stack commits state)))
+            ;; Push updated branches (needed before reopening PRs)
             (format t "~%Pushing updated branches...~%")
-            (loop for commit in commits
-                  for patch-id = (getf commit :patch-id)
-                  for branch-name = (smoke-branch-name patch-id)
-                  do (create-branch branch-name (getf commit :hash))
+            (loop for r in reconciled
+                  for commit = (getf r :commit)
+                  for position = (getf r :position)
+                  for branch-name = (or (getf r :branch)
+                                        (smoke-branch-name branch position))
+                  do (setf (getf r :branch) branch-name)
+                     (create-branch branch-name (getf commit :hash))
                      (safe-push-branch branch-name)
                      (format t "  ~A -> ~A~%" (getf commit :short) branch-name))
 
@@ -165,8 +180,9 @@
             (when closed-prs
               (format t "~%Reopening closed PRs...~%")
               (loop for (patch-id . pr) in closed-prs
-                    ;; Only reopen if the commit still exists in stack
-                    when (find patch-id commits :key (lambda (c) (getf c :patch-id)) :test #'string=)
+                    when (find patch-id reconciled
+                                :key (lambda (r) (getf r :patch-id))
+                                :test #'string=)
                       do (handler-case
                              (progn
                                (gh-pr-reopen pr)
@@ -174,16 +190,14 @@
                            (error ()
                              (format t "  PR #~D could not be reopened~%" pr)))))
 
-            ;; Update draft states (all PRs already base on main)
+            ;; Update draft states
             (format t "~%Updating PRs...~%")
-            (loop for commit in commits
+            (loop for r in reconciled
                   for i from 0
-                  for patch-id = (getf commit :patch-id)
-                  for pr = (find-pr-for-patch-id state patch-id)
+                  for pr = (getf r :pr)
                   when pr
                     do (let ((pr-st (pr-state pr)))
                          (when (eq pr-st :open)
-                           ;; Update draft state - only first PR is ready
                            (if (zerop i)
                                (progn
                                  (ignore-errors (gh-pr-ready pr))
@@ -193,53 +207,57 @@
                                  (format t "  PR #~D marked draft~%" pr))))))
 
             ;; Check for commits without PRs
-            (let ((missing-prs (loop for commit in commits
-                                     for patch-id = (getf commit :patch-id)
-                                     unless (find-pr-for-patch-id state patch-id)
-                                       collect commit)))
+            (let ((missing-prs (loop for r in reconciled
+                                     unless (getf r :pr)
+                                       collect (getf r :commit))))
               (when missing-prs
                 (format t "~%~D commit~:P need~:[s~;~] PRs. Run 'smoke push' to create them.~%"
                         (length missing-prs)
-                        (= (length missing-prs) 1)))))))
+                        (= (length missing-prs) 1))))
+
+            ;; Save reconciled state
+            (setf state (build-state-from-reconciliation branch reconciled)))))
 
     (save-state state)
     (format t "~%Done.~%")))
 
 (defun url-stack (&optional position)
   "Show PR URL(s). If POSITION given (1-indexed), show that commit's PR URL."
-  (let* ((commits (stack-commits))
-         (state (load-state)))
+  (let* ((branch (current-branch))
+         (commits (stack-commits))
+         (state (or (load-state) (init-state branch))))
     (when (null commits)
       (format t "No commits in stack.~%")
       (return-from url-stack))
-    (if position
-        ;; Show URL for specific position
-        (if (or (< position 1) (> position (length commits)))
-            (format t "Invalid position ~D. Stack has ~D commit~:P.~%"
-                    position (length commits))
-            (let* ((commit (nth (1- position) commits))
-                   (patch-id (getf commit :patch-id))
-                   (pr (find-pr-for-patch-id state patch-id)))
-              (if pr
-                  (let ((url (gh-pr-url pr)))
-                    (if url
-                        (format t "~A~%" url)
-                        (format t "https://github.com/~A/pull/~D~%"
-                                (repo-name) pr)))
-                  (format t "No PR for commit ~A (~A)~%"
-                          (getf commit :short) (getf commit :subject)))))
-        ;; Show all URLs
-        (loop for commit in commits
-              for i from 1
-              for patch-id = (getf commit :patch-id)
-              for pr = (find-pr-for-patch-id state patch-id)
-              do (if pr
-                     (let ((url (gh-pr-url pr)))
-                       (format t "~D. ~A ~A~%   ~A~%"
-                               i (getf commit :short) (getf commit :subject)
-                               (or url (format nil "PR #~D" pr))))
-                     (format t "~D. ~A ~A~%   (no PR)~%"
-                             i (getf commit :short) (getf commit :subject)))))))
+    (let ((reconciled (reconcile-stack commits state)))
+      (if position
+          ;; Show URL for specific position
+          (if (or (< position 1) (> position (length commits)))
+              (format t "Invalid position ~D. Stack has ~D commit~:P.~%"
+                      position (length commits))
+              (let* ((r (nth (1- position) reconciled))
+                     (commit (getf r :commit))
+                     (pr (getf r :pr)))
+                (if pr
+                    (let ((url (gh-pr-url pr)))
+                      (if url
+                          (format t "~A~%" url)
+                          (format t "https://github.com/~A/pull/~D~%"
+                                  (repo-name) pr)))
+                    (format t "No PR for commit ~A (~A)~%"
+                            (getf commit :short) (getf commit :subject)))))
+          ;; Show all URLs
+          (loop for r in reconciled
+                for commit = (getf r :commit)
+                for i from 1
+                for pr = (getf r :pr)
+                do (if pr
+                       (let ((url (gh-pr-url pr)))
+                         (format t "~D. ~A ~A~%   ~A~%"
+                                 i (getf commit :short) (getf commit :subject)
+                                 (or url (format nil "PR #~D" pr))))
+                       (format t "~D. ~A ~A~%   (no PR)~%"
+                               i (getf commit :short) (getf commit :subject))))))))
 
 (defun amend-stack ()
   "Interactive amend: pick a commit to amend, then rebase."

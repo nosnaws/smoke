@@ -20,4 +20,5 @@
 (sb-ext:save-lisp-and-die "smoke"
                           :toplevel #'smoke:main
                           :executable t
-                          :compression t)
+                          :compression t
+                          :save-runtime-options t)

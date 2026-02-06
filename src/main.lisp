@@ -34,6 +34,10 @@
                (string= (first args) "--help")
                (string= (first args) "-h"))
            (print-usage))
+          ((or (string= (first args) "version")
+               (string= (first args) "--version")
+               (string= (first args) "-v"))
+           (format t "smoke ~A~%" (asdf:component-version (asdf:find-system :smoke))))
           (t
            (format *error-output* "Unknown command: ~A~%" (first args))
            (print-usage)

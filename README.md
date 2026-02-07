@@ -33,7 +33,7 @@ main
 
 ## Tracking
 
-Smoke tracks commit-to-PR mappings locally using `git patch-id` for stable identification across rebases. No modification to commit messages required.
+Smoke tracks commit-to-PR mappings locally using each commit's position in the stack as the stable identifier. No modification to commit messages required.
 
 State is stored in `.smoke/state.json`:
 
@@ -41,9 +41,9 @@ State is stored in `.smoke/state.json`:
 {
   "branch": "my-feature",
   "stack": [
-    {"patch_id": "abc123", "pr": 42},
-    {"patch_id": "def456", "pr": 43},
-    {"patch_id": "ghi789", "pr": 44}
+    {"index": 0, "pr": 42, "smoke_branch": "smoke/my-feature/01"},
+    {"index": 1, "pr": 43, "smoke_branch": "smoke/my-feature/02"},
+    {"index": 2, "pr": 44, "smoke_branch": "smoke/my-feature/03"}
   ]
 }
 ```

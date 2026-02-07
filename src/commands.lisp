@@ -54,7 +54,6 @@
       (loop for r in reconciled
             for i from 0
             for commit = (getf r :commit)
-            for patch-id = (getf r :patch-id)
             for existing-pr = (getf r :pr)
             for position = (getf r :position)
             for branch-name = (or (getf r :branch)
@@ -131,24 +130,23 @@
 
     ;; Check for merged and closed PRs before rebase
     (let ((stack (cdr (assoc :stack state)))
-          (merged-patch-ids nil))
+          (merged-pr-numbers nil))
       ;; Detect merged and closed PRs
       (loop for entry in stack
             for pr = (cdr (assoc :pr entry))
-            for patch-id = (cdr (assoc :patch--id entry))
             when pr
               do (let ((pr-st (pr-state pr)))
                    (cond
                      ((eq pr-st :merged)
                       (format t "PR #~D merged.~%" pr)
-                      (push patch-id merged-patch-ids))
+                      (push pr merged-pr-numbers))
                      ((eq pr-st :closed)
                       (format t "PR #~D closed (will reopen).~%" pr)
-                      (push (cons patch-id pr) closed-prs)))))
+                      (push pr closed-prs)))))
 
       ;; Remove only merged PRs from state (keep closed ones to reopen)
-      (when merged-patch-ids
-        (setf state (remove-merged-from-state state merged-patch-ids))))
+      (when merged-pr-numbers
+        (setf state (remove-merged-prs-from-state state merged-pr-numbers))))
 
     ;; Rebase onto main
     (format t "Rebasing onto origin/~A...~%" main)
@@ -179,10 +177,9 @@
             ;; Reopen closed PRs
             (when closed-prs
               (format t "~%Reopening closed PRs...~%")
-              (loop for (patch-id . pr) in closed-prs
-                    when (find patch-id reconciled
-                                :key (lambda (r) (getf r :patch-id))
-                                :test #'string=)
+              (loop for pr in closed-prs
+                    when (find pr reconciled
+                               :key (lambda (r) (getf r :pr)))
                       do (handler-case
                              (progn
                                (gh-pr-reopen pr)

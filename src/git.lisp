@@ -47,29 +47,19 @@
   "Return the short hash of COMMIT."
   (run-git "log" "-1" "--format=%h" commit))
 
-(defun patch-id (commit)
-  "Return the patch-id for COMMIT. Stable across rebases."
-  (let* ((diff (run-git "diff-tree" "-p" commit))
-         (result (with-input-from-string (s diff)
-                   (uiop:run-program '("git" "patch-id" "--stable")
-                                     :input s
-                                     :output '(:string :stripped t)))))
-    (first (str:words (str:trim result)))))
-
 (defun remote-main-branch ()
   "Return the remote main branch ref (origin/main or origin/master)."
   (format nil "origin/~A" (main-branch)))
 
 (defun stack-commits ()
   "Return list of commits in the current stack (oldest first).
-Each commit is a plist with :hash, :short, :subject, and :patch-id."
+Each commit is a plist with :hash, :short, and :subject."
   (let* ((base (merge-base (remote-main-branch)))
          (commits (commits-since base)))
     (mapcar (lambda (hash)
               (list :hash hash
                     :short (commit-short-hash hash)
-                    :subject (commit-subject hash)
-                    :patch-id (patch-id hash)))
+                    :subject (commit-subject hash)))
             commits)))
 
 (defun ensure-clean-worktree ()

@@ -12,60 +12,32 @@
     (is (string= "feature-branch" (cdr (assoc :branch state))))
     (is (null (cdr (assoc :stack state))))))
 
-;;; update-state-mapping
+;;; remove-merged-prs-from-state
 
-(test update-state-mapping-adds-entry
-  (let* ((state (smoke::init-state "main"))
-         (updated (smoke::update-state-mapping state "abc123" 42 "smoke/main/01")))
-    (is (= 1 (length (cdr (assoc :stack updated)))))
-    (is (= 42 (smoke::find-pr-for-patch-id updated "abc123")))
-    (let ((entry (first (cdr (assoc :stack updated)))))
-      (is (string= "smoke/main/01" (cdr (assoc :smoke--branch entry)))))))
+(defun make-state-with-entries (branch entries)
+  "Helper: ENTRIES is list of (index pr smoke-branch)."
+  (list (cons :branch branch)
+        (cons :stack
+              (mapcar (lambda (e)
+                        (list (cons :index (first e))
+                              (cons :pr (second e))
+                              (cons :smoke--branch (third e))))
+                      entries))))
 
-(test update-state-mapping-updates-existing
-  (let* ((state (smoke::init-state "main"))
-         (state (smoke::update-state-mapping state "abc123" 42 "smoke/main/01"))
-         (updated (smoke::update-state-mapping state "abc123" 99 "smoke/main/01")))
-    (is (= 1 (length (cdr (assoc :stack updated)))))
-    (is (= 99 (smoke::find-pr-for-patch-id updated "abc123")))))
-
-(test update-state-mapping-preserves-others
-  (let* ((state (smoke::init-state "main"))
-         (state (smoke::update-state-mapping state "aaa" 1 "smoke/main/01"))
-         (state (smoke::update-state-mapping state "bbb" 2 "smoke/main/02"))
-         (updated (smoke::update-state-mapping state "aaa" 10 "smoke/main/01")))
-    (is (= 2 (length (cdr (assoc :stack updated)))))
-    (is (= 10 (smoke::find-pr-for-patch-id updated "aaa")))
-    (is (= 2 (smoke::find-pr-for-patch-id updated "bbb")))))
-
-;;; find-pr-for-patch-id
-
-(test find-pr-for-patch-id-found
-  (let* ((state (smoke::init-state "main"))
-         (state (smoke::update-state-mapping state "patch1" 10 "smoke/main/01")))
-    (is (= 10 (smoke::find-pr-for-patch-id state "patch1")))))
-
-(test find-pr-for-patch-id-missing
-  (let ((state (smoke::init-state "main")))
-    (is (null (smoke::find-pr-for-patch-id state "nonexistent")))))
-
-;;; remove-merged-from-state
-
-(test remove-merged-from-state-removes-correct
-  (let* ((state (smoke::init-state "main"))
-         (state (smoke::update-state-mapping state "aaa" 1 "smoke/main/01"))
-         (state (smoke::update-state-mapping state "bbb" 2 "smoke/main/02"))
-         (state (smoke::update-state-mapping state "ccc" 3 "smoke/main/03"))
-         (cleaned (smoke::remove-merged-from-state state '("aaa" "ccc"))))
+(test remove-merged-prs-from-state-removes-correct
+  (let* ((state (make-state-with-entries "feat"
+                  '((0 1 "smoke/feat/01")
+                    (1 2 "smoke/feat/02")
+                    (2 3 "smoke/feat/03"))))
+         (cleaned (smoke::remove-merged-prs-from-state state '(1 3))))
     (is (= 1 (length (cdr (assoc :stack cleaned)))))
-    (is (null (smoke::find-pr-for-patch-id cleaned "aaa")))
-    (is (= 2 (smoke::find-pr-for-patch-id cleaned "bbb")))
-    (is (null (smoke::find-pr-for-patch-id cleaned "ccc")))))
+    (let ((entry (first (cdr (assoc :stack cleaned)))))
+      (is (= 2 (cdr (assoc :pr entry)))))))
 
-(test remove-merged-from-state-preserves-branch
-  (let* ((state (smoke::init-state "my-branch"))
-         (state (smoke::update-state-mapping state "aaa" 1 "smoke/my-branch/01"))
-         (cleaned (smoke::remove-merged-from-state state '("aaa"))))
+(test remove-merged-prs-from-state-preserves-branch
+  (let* ((state (make-state-with-entries "my-branch"
+                  '((0 1 "smoke/my-branch/01"))))
+         (cleaned (smoke::remove-merged-prs-from-state state '(1))))
     (is (string= "my-branch" (cdr (assoc :branch cleaned))))))
 
 ;;; smoke-branch-name
@@ -142,33 +114,36 @@
 
 ;;; migrate-state-entry
 
-(test migrate-state-entry-legacy
-  "Legacy entry without :smoke--branch gets reconstructed branch name."
-  (let ((entry (list (cons :patch--id "abcdef1234567890") (cons :pr 42)))
-        (branch "feature"))
-    (let ((migrated (smoke::migrate-state-entry entry branch)))
-      (is (string= "smoke/feature/abcdef12" (cdr (assoc :smoke--branch migrated))))
+(test migrate-state-entry-legacy-patch-id
+  "Legacy entry with :patch--id gets converted to index-based with smoke-branch."
+  (let ((entry (list (cons :patch--id "abcdef1234567890") (cons :pr 42))))
+    (let ((migrated (smoke::migrate-state-entry entry "feature" 0)))
+      (is (= 0 (cdr (assoc :index migrated))))
       (is (= 42 (cdr (assoc :pr migrated))))
-      (is (string= "abcdef1234567890" (cdr (assoc :patch--id migrated)))))))
+      (is (string= "smoke/feature/01" (cdr (assoc :smoke--branch migrated))))
+      (is (null (assoc :patch--id migrated))))))
+
+(test migrate-state-entry-index-no-smoke-branch
+  "Entry with :index but no :smoke--branch gets smoke-branch added."
+  (let ((entry (list (cons :index 1) (cons :pr 42))))
+    (let ((migrated (smoke::migrate-state-entry entry "feature" 1)))
+      (is (= 1 (cdr (assoc :index migrated))))
+      (is (= 42 (cdr (assoc :pr migrated))))
+      (is (string= "smoke/feature/02" (cdr (assoc :smoke--branch migrated)))))))
 
 (test migrate-state-entry-already-migrated
   "Entry with :smoke--branch is returned unchanged."
-  (let ((entry (list (cons :patch--id "abcdef1234567890")
+  (let ((entry (list (cons :index 0)
                      (cons :pr 42)
                      (cons :smoke--branch "smoke/feature/01"))))
-    (let ((migrated (smoke::migrate-state-entry entry "feature")))
-      (is (string= "smoke/feature/01" (cdr (assoc :smoke--branch migrated)))))))
-
-(test migrate-state-entry-short-patch-id
-  "Legacy entry with short patch ID doesn't error."
-  (let ((entry (list (cons :patch--id "abc") (cons :pr 1))))
-    (let ((migrated (smoke::migrate-state-entry entry "main")))
-      (is (string= "smoke/main/abc" (cdr (assoc :smoke--branch migrated)))))))
+    (let ((migrated (smoke::migrate-state-entry entry "feature" 0)))
+      (is (string= "smoke/feature/01" (cdr (assoc :smoke--branch migrated))))
+      (is (= 42 (cdr (assoc :pr migrated)))))))
 
 ;;; migrate-state
 
-(test migrate-state-full
-  "migrate-state processes all entries."
+(test migrate-state-legacy-patch-ids
+  "migrate-state converts legacy patch-id entries to index-based."
   (let* ((state (list (cons :branch "feat")
                       (cons :stack
                             (list (list (cons :patch--id "aaaa1111bbbb") (cons :pr 1))
@@ -177,33 +152,36 @@
     (is (string= "feat" (cdr (assoc :branch migrated))))
     (let ((stack (cdr (assoc :stack migrated))))
       (is (= 2 (length stack)))
-      (is (string= "smoke/feat/aaaa1111" (cdr (assoc :smoke--branch (first stack)))))
-      (is (string= "smoke/feat/cccc2222" (cdr (assoc :smoke--branch (second stack))))))))
+      (is (= 0 (cdr (assoc :index (first stack)))))
+      (is (string= "smoke/feat/01" (cdr (assoc :smoke--branch (first stack)))))
+      (is (= 1 (cdr (assoc :index (second stack)))))
+      (is (string= "smoke/feat/02" (cdr (assoc :smoke--branch (second stack))))))))
+
+(test migrate-state-already-migrated
+  "migrate-state preserves already-migrated entries."
+  (let* ((state (make-state-with-entries "feat"
+                  '((0 10 "smoke/feat/01")
+                    (1 20 "smoke/feat/02"))))
+         (migrated (smoke::migrate-state state)))
+    (let ((stack (cdr (assoc :stack migrated))))
+      (is (= 2 (length stack)))
+      (is (string= "smoke/feat/01" (cdr (assoc :smoke--branch (first stack)))))
+      (is (string= "smoke/feat/02" (cdr (assoc :smoke--branch (second stack))))))))
 
 ;;; reconcile-stack
 
-(defun make-commit (hash patch-id subject)
+(defun make-commit (hash subject)
   "Helper to create a commit plist for testing."
   (list :hash hash :short (subseq hash 0 (min 7 (length hash)))
-        :subject subject :patch-id patch-id))
+        :subject subject))
 
-(defun make-state-with-entries (branch entries)
-  "Helper: ENTRIES is list of (patch-id pr smoke-branch)."
-  (list (cons :branch branch)
-        (cons :stack
-              (mapcar (lambda (e)
-                        (list (cons :patch--id (first e))
-                              (cons :pr (second e))
-                              (cons :smoke--branch (third e))))
-                      entries))))
-
-(test reconcile-patch-id-match
-  "Commits matched by patch ID preserve their PR and branch."
-  (let* ((commits (list (make-commit "aaa" "p1" "First")
-                        (make-commit "bbb" "p2" "Second")))
+(test reconcile-position-match
+  "Commits matched by position preserve their PR and branch."
+  (let* ((commits (list (make-commit "aaa" "First")
+                        (make-commit "bbb" "Second")))
          (state (make-state-with-entries "feat"
-                  '(("p1" 10 "smoke/feat/01")
-                    ("p2" 20 "smoke/feat/02")))))
+                  '((0 10 "smoke/feat/01")
+                    (1 20 "smoke/feat/02")))))
     (multiple-value-bind (reconciled orphans)
         (smoke::reconcile-stack commits state)
       (is (= 2 (length reconciled)))
@@ -213,31 +191,29 @@
       (is (= 20 (getf (second reconciled) :pr)))
       (is (string= "smoke/feat/02" (getf (second reconciled) :branch))))))
 
-(test reconcile-position-fallback-amend
-  "Amended commit (different patch ID, same position) falls back to position match."
-  (let* ((commits (list (make-commit "aaa" "p1-amended" "First amended")
-                        (make-commit "bbb" "p2" "Second")))
+(test reconcile-amended-commit
+  "Amended commit (different hash, same position) still matches by position."
+  (let* ((commits (list (make-commit "aaa-amended" "First amended")
+                        (make-commit "bbb" "Second")))
          (state (make-state-with-entries "feat"
-                  '(("p1-original" 10 "smoke/feat/01")
-                    ("p2" 20 "smoke/feat/02")))))
+                  '((0 10 "smoke/feat/01")
+                    (1 20 "smoke/feat/02")))))
     (multiple-value-bind (reconciled orphans)
         (smoke::reconcile-stack commits state)
       (is (= 2 (length reconciled)))
       (is (null orphans))
-      ;; First commit matched by position fallback
       (is (= 10 (getf (first reconciled) :pr)))
       (is (string= "smoke/feat/01" (getf (first reconciled) :branch)))
-      ;; Second commit matched by patch ID
       (is (= 20 (getf (second reconciled) :pr))))))
 
 (test reconcile-new-commit-appended
   "New commit appended gets no PR and no branch."
-  (let* ((commits (list (make-commit "aaa" "p1" "First")
-                        (make-commit "bbb" "p2" "Second")
-                        (make-commit "ccc" "p3" "Third (new)")))
+  (let* ((commits (list (make-commit "aaa" "First")
+                        (make-commit "bbb" "Second")
+                        (make-commit "ccc" "Third (new)")))
          (state (make-state-with-entries "feat"
-                  '(("p1" 10 "smoke/feat/01")
-                    ("p2" 20 "smoke/feat/02")))))
+                  '((0 10 "smoke/feat/01")
+                    (1 20 "smoke/feat/02")))))
     (multiple-value-bind (reconciled orphans)
         (smoke::reconcile-stack commits state)
       (is (= 3 (length reconciled)))
@@ -249,37 +225,22 @@
 
 (test reconcile-commit-removed
   "Removed commit produces an orphan."
-  (let* ((commits (list (make-commit "bbb" "p2" "Second")))
+  (let* ((commits (list (make-commit "bbb" "Second")))
          (state (make-state-with-entries "feat"
-                  '(("p1" 10 "smoke/feat/01")
-                    ("p2" 20 "smoke/feat/02")))))
+                  '((0 10 "smoke/feat/01")
+                    (1 20 "smoke/feat/02")))))
     (multiple-value-bind (reconciled orphans)
         (smoke::reconcile-stack commits state)
       (is (= 1 (length reconciled)))
       (is (= 1 (length orphans)))
-      ;; The remaining commit matched by patch ID
-      (is (= 20 (getf (first reconciled) :pr)))
-      ;; The orphan is the removed commit's entry
-      (is (string= "p1" (cdr (assoc :patch--id (first orphans))))))))
-
-(test reconcile-reordered-commits
-  "Reordered commits still match by patch ID."
-  (let* ((commits (list (make-commit "bbb" "p2" "Second")
-                        (make-commit "aaa" "p1" "First")))
-         (state (make-state-with-entries "feat"
-                  '(("p1" 10 "smoke/feat/01")
-                    ("p2" 20 "smoke/feat/02")))))
-    (multiple-value-bind (reconciled orphans)
-        (smoke::reconcile-stack commits state)
-      (is (= 2 (length reconciled)))
-      (is (null orphans))
-      ;; p2 is now first, p1 is now second
-      (is (= 20 (getf (first reconciled) :pr)))
-      (is (= 10 (getf (second reconciled) :pr))))))
+      ;; The remaining commit matches position 0 (first state entry)
+      (is (= 10 (getf (first reconciled) :pr)))
+      ;; The orphan is the second state entry
+      (is (= 20 (cdr (assoc :pr (first orphans))))))))
 
 (test reconcile-empty-state
   "Empty state means all commits are unmatched."
-  (let* ((commits (list (make-commit "aaa" "p1" "First")))
+  (let* ((commits (list (make-commit "aaa" "First")))
          (state (smoke::init-state "feat")))
     (multiple-value-bind (reconciled orphans)
         (smoke::reconcile-stack commits state)
@@ -291,7 +252,7 @@
   "No commits means no results and all state entries are orphans."
   (let* ((commits nil)
          (state (make-state-with-entries "feat"
-                  '(("p1" 10 "smoke/feat/01")))))
+                  '((0 10 "smoke/feat/01")))))
     (multiple-value-bind (reconciled orphans)
         (smoke::reconcile-stack commits state)
       (is (= 0 (length reconciled)))
@@ -301,21 +262,21 @@
 
 (test build-state-from-reconciliation-basic
   "Builds state with only entries that have PRs."
-  (let* ((reconciled (list (list :commit (make-commit "a" "p1" "First")
+  (let* ((reconciled (list (list :commit (make-commit "a" "First")
                                  :pr 10 :branch "smoke/feat/01"
-                                 :patch-id "p1" :position 1)
-                           (list :commit (make-commit "b" "p2" "Second")
+                                 :position 1)
+                           (list :commit (make-commit "b" "Second")
                                  :pr nil :branch nil
-                                 :patch-id "p2" :position 2)
-                           (list :commit (make-commit "c" "p3" "Third")
+                                 :position 2)
+                           (list :commit (make-commit "c" "Third")
                                  :pr 30 :branch "smoke/feat/03"
-                                 :patch-id "p3" :position 3)))
+                                 :position 3)))
          (state (smoke::build-state-from-reconciliation "feat" reconciled)))
     (is (string= "feat" (cdr (assoc :branch state))))
     (let ((stack (cdr (assoc :stack state))))
       (is (= 2 (length stack)))
-      (is (string= "p1" (cdr (assoc :patch--id (first stack)))))
+      (is (= 0 (cdr (assoc :index (first stack)))))
       (is (= 10 (cdr (assoc :pr (first stack)))))
       (is (string= "smoke/feat/01" (cdr (assoc :smoke--branch (first stack)))))
-      (is (string= "p3" (cdr (assoc :patch--id (second stack)))))
+      (is (= 2 (cdr (assoc :index (second stack)))))
       (is (= 30 (cdr (assoc :pr (second stack))))))))

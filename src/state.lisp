@@ -19,23 +19,39 @@
   "Create the .smoke directory if it doesn't exist."
   (ensure-directories-exist (state-dir)))
 
-(defun migrate-state-entry (entry branch)
-  "Migrate a legacy state ENTRY (no :smoke--branch) by reconstructing the old
-patch-id-based branch name. BRANCH is the stack's base branch name."
-  (if (assoc :smoke--branch entry)
-      entry
-      (let* ((patch-id (cdr (assoc :patch--id entry)))
-             (prefix (subseq patch-id 0 (min 8 (length patch-id))))
-             (reconstructed (format nil "smoke/~A/~A" branch prefix)))
-        (cons (cons :smoke--branch reconstructed) entry))))
+(defun migrate-state-entry (entry branch position)
+  "Migrate a legacy state ENTRY to index-based format.
+BRANCH is the stack's base branch name. POSITION is the 0-based index.
+Handles:
+  - Legacy entries with :patch--id (no :smoke--branch): convert to index-based
+  - Entries with :index but no :smoke--branch: add smoke-branch
+  - Entries already having :smoke--branch: keep as-is"
+  (let ((has-smoke-branch (assoc :smoke--branch entry))
+        (has-index (assoc :index entry))
+        (pr (cdr (assoc :pr entry)))
+        (smoke-branch (smoke-branch-name branch (1+ position))))
+    (cond
+      ;; Already fully migrated
+      (has-smoke-branch entry)
+      ;; Has index but no smoke-branch
+      (has-index
+       (list (cons :index position)
+             (cons :pr pr)
+             (cons :smoke--branch smoke-branch)))
+      ;; Legacy patch-id entry
+      (t
+       (list (cons :index position)
+             (cons :pr pr)
+             (cons :smoke--branch smoke-branch))))))
 
 (defun migrate-state (state)
-  "Migrate all stack entries in STATE, adding :smoke--branch where missing."
+  "Migrate all stack entries in STATE to index-based format."
   (let ((branch (cdr (assoc :branch state)))
         (stack (cdr (assoc :stack state))))
     (list (cons :branch branch)
-          (cons :stack (mapcar (lambda (e) (migrate-state-entry e branch))
-                               stack)))))
+          (cons :stack (loop for e in stack
+                             for i from 0
+                             collect (migrate-state-entry e branch i))))))
 
 (defun load-state ()
   "Load state from .smoke/state.json. Returns alist or nil."
@@ -63,8 +79,8 @@ patch-id-based branch name. BRANCH is the stack's base branch name."
         (loop for entry in stack
               for i from 0
               for smoke-branch = (cdr (assoc :smoke--branch entry))
-              do (format out "    {\"patch_id\": ~S, \"pr\": ~D~@[, \"smoke_branch\": ~S~]}"
-                         (cdr (assoc :patch--id entry))
+              do (format out "    {\"index\": ~D, \"pr\": ~D~@[, \"smoke_branch\": ~S~]}"
+                         (cdr (assoc :index entry))
                          (cdr (assoc :pr entry))
                          smoke-branch)
               when (< i (1- (length stack)))
@@ -74,125 +90,51 @@ patch-id-based branch name. BRANCH is the stack's base branch name."
       (format out "}~%"))
     (rename-file tmp target)))
 
-(defun find-pr-for-patch-id (state patch-id)
-  "Find the PR number for PATCH-ID in STATE, or nil."
-  (let ((stack (cdr (assoc :stack state))))
-    (loop for entry in stack
-          when (string= (cdr (assoc :patch--id entry)) patch-id)
-            return (cdr (assoc :pr entry)))))
-
-(defun update-state-mapping (state patch-id pr-number smoke-branch)
-  "Return new state with PATCH-ID mapped to PR-NUMBER and SMOKE-BRANCH."
-  (let* ((branch (cdr (assoc :branch state)))
-         (stack (cdr (assoc :stack state)))
-         (existing (find patch-id stack
-                         :key (lambda (e) (cdr (assoc :patch--id e)))
-                         :test #'string=)))
-    (if existing
-        ;; Update existing entry
-        (list (cons :branch branch)
-              (cons :stack
-                    (mapcar (lambda (e)
-                              (if (string= (cdr (assoc :patch--id e)) patch-id)
-                                  (list (cons :patch--id patch-id)
-                                        (cons :pr pr-number)
-                                        (cons :smoke--branch smoke-branch))
-                                  e))
-                            stack)))
-        ;; Add new entry
-        (list (cons :branch branch)
-              (cons :stack
-                    (append stack
-                            (list (list (cons :patch--id patch-id)
-                                        (cons :pr pr-number)
-                                        (cons :smoke--branch smoke-branch)))))))))
-
 (defun init-state (branch)
   "Create initial state for BRANCH."
   (list (cons :branch branch)
         (cons :stack nil)))
 
-(defun remove-merged-from-state (state merged-patch-ids)
-  "Remove MERGED-PATCH-IDS from STATE."
+(defun remove-merged-prs-from-state (state merged-pr-numbers)
+  "Remove entries with PR numbers in MERGED-PR-NUMBERS from STATE."
   (let ((branch (cdr (assoc :branch state)))
         (stack (cdr (assoc :stack state))))
     (list (cons :branch branch)
           (cons :stack
                 (remove-if (lambda (e)
-                             (member (cdr (assoc :patch--id e)) merged-patch-ids
-                                     :test #'string=))
+                             (member (cdr (assoc :pr e)) merged-pr-numbers))
                            stack)))))
 
 ;;; Reconciliation — match commits to state entries
 
 (defun reconcile-stack (commits state)
-  "Match COMMITS (list of plists with :patch-id) against STATE stack entries.
-Two-pass algorithm:
-  1. Match by patch ID (handles rebases/reorders)
-  2. Match remaining commits to remaining entries by position (handles amends)
-Returns list of plists: (:commit c :pr n :branch b :patch-id id :position pos).
+  "Match COMMITS against STATE stack entries by position.
+Returns list of plists: (:commit c :pr n :branch b :position pos).
 Also returns as second value a list of orphaned state entries (unmatched)."
   (let* ((stack (cdr (assoc :stack state)))
-         (matched-state-indices (make-hash-table))
-         (matched-commit-indices (make-hash-table))
-         (results (make-array (length commits) :initial-element nil)))
-    ;; Pass 1: match by patch ID
-    (loop for commit in commits
-          for ci from 0
-          for patch-id = (getf commit :patch-id)
-          do (loop for entry in stack
-                   for si from 0
-                   when (and (not (gethash si matched-state-indices))
-                             (string= (cdr (assoc :patch--id entry)) patch-id))
-                     do (setf (gethash si matched-state-indices) t
-                              (gethash ci matched-commit-indices) t
-                              (aref results ci)
-                              (list :commit commit
-                                    :pr (cdr (assoc :pr entry))
-                                    :branch (cdr (assoc :smoke--branch entry))
-                                    :patch-id patch-id
-                                    :position (1+ ci)))
-                     and return nil))
-    ;; Pass 2: position-based fallback for unmatched commits
-    (loop for commit in commits
-          for ci from 0
-          unless (gethash ci matched-commit-indices)
-            do (loop for entry in stack
-                     for si from 0
-                     ;; Match by position: commit index ci matches state index ci
-                     when (and (= si ci)
-                               (not (gethash si matched-state-indices)))
-                       do (setf (gethash si matched-state-indices) t
-                                (aref results ci)
-                                (list :commit commit
-                                      :pr (cdr (assoc :pr entry))
-                                      :branch (cdr (assoc :smoke--branch entry))
-                                      :patch-id (getf commit :patch-id)
-                                      :position (1+ ci)))
-                       and return nil))
-    ;; Fill in unmatched commits (no state entry found)
-    (loop for commit in commits
-          for ci from 0
-          unless (aref results ci)
-            do (setf (aref results ci)
-                     (list :commit commit
-                           :pr nil
-                           :branch nil
-                           :patch-id (getf commit :patch-id)
-                           :position (1+ ci))))
-    ;; Collect orphaned state entries
-    (let ((orphans (loop for entry in stack
-                         for si from 0
-                         unless (gethash si matched-state-indices)
-                           collect entry)))
-      (values (coerce results 'list) orphans))))
+         (results (loop for commit in commits
+                        for ci from 0
+                        for entry = (nth ci stack)
+                        collect (if entry
+                                    (list :commit commit
+                                          :pr (cdr (assoc :pr entry))
+                                          :branch (cdr (assoc :smoke--branch entry))
+                                          :position (1+ ci))
+                                    (list :commit commit
+                                          :pr nil
+                                          :branch nil
+                                          :position (1+ ci)))))
+         (orphans (when (> (length stack) (length commits))
+                    (subseq stack (length commits)))))
+    (values results orphans)))
 
 (defun build-state-from-reconciliation (branch reconciled)
   "Build a state alist from BRANCH name and RECONCILED results."
   (list (cons :branch branch)
         (cons :stack
               (loop for r in reconciled
+                    for i from 0
                     when (getf r :pr)
-                      collect (list (cons :patch--id (getf r :patch-id))
+                      collect (list (cons :index i)
                                     (cons :pr (getf r :pr))
                                     (cons :smoke--branch (getf r :branch)))))))

@@ -55,9 +55,8 @@
             for i from 0
             for commit = (getf r :commit)
             for existing-pr = (getf r :pr)
-            for position = (getf r :position)
             for branch-name = (or (getf r :branch)
-                                  (smoke-branch-name branch position))
+                                  (smoke-branch-name branch (next-branch-number state)))
             do
                ;; Store branch name back into reconciled result
                (setf (getf r :branch) branch-name)
@@ -111,7 +110,9 @@
                  (delete-remote-branch orphan-branch))
 
       ;; Build and save new state
-      (let ((new-state (build-state-from-reconciliation branch reconciled)))
+      (let ((new-state (build-state-from-reconciliation
+                        branch reconciled
+                        (cdr (assoc :branch--counter state)))))
         (save-state new-state)))
 
     (format t "~%Done.~%")))
@@ -166,9 +167,8 @@
             (format t "~%Pushing updated branches...~%")
             (loop for r in reconciled
                   for commit = (getf r :commit)
-                  for position = (getf r :position)
                   for branch-name = (or (getf r :branch)
-                                        (smoke-branch-name branch position))
+                                        (smoke-branch-name branch (next-branch-number state)))
                   do (setf (getf r :branch) branch-name)
                      (create-branch branch-name (getf commit :hash))
                      (safe-push-branch branch-name)
@@ -213,7 +213,9 @@
                         (= (length missing-prs) 1))))
 
             ;; Save reconciled state
-            (setf state (build-state-from-reconciliation branch reconciled)))))
+            (setf state (build-state-from-reconciliation
+                         branch reconciled
+                         (cdr (assoc :branch--counter state)))))))
 
     (save-state state)
     (format t "~%Done.~%")))

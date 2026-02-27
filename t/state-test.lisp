@@ -14,9 +14,10 @@
 
 ;;; remove-merged-prs-from-state
 
-(defun make-state-with-entries (branch entries)
+(defun make-state-with-entries (branch entries &key (counter 1))
   "Helper: ENTRIES is list of (index pr smoke-branch)."
   (list (cons :branch branch)
+        (cons :branch--counter counter)
         (cons :stack
               (mapcar (lambda (e)
                         (list (cons :index (first e))
@@ -271,7 +272,7 @@
                            (list :commit (make-commit "c" "Third")
                                  :pr 30 :branch "smoke/feat/03"
                                  :position 3)))
-         (state (smoke::build-state-from-reconciliation "feat" reconciled)))
+         (state (smoke::build-state-from-reconciliation "feat" reconciled 5)))
     (is (string= "feat" (cdr (assoc :branch state))))
     (let ((stack (cdr (assoc :stack state))))
       (is (= 2 (length stack)))
@@ -280,3 +281,59 @@
       (is (string= "smoke/feat/01" (cdr (assoc :smoke--branch (first stack)))))
       (is (= 2 (cdr (assoc :index (second stack)))))
       (is (= 30 (cdr (assoc :pr (second stack))))))))
+
+;;; init-state counter
+
+(test init-state-has-counter
+  (let ((state (smoke::init-state "feat")))
+    (is (= 1 (cdr (assoc :branch--counter state))))))
+
+;;; branch counter
+
+(test migrate-state-initializes-counter
+  "Migration sets counter to (1+ length) for states without one."
+  (let* ((state (list (cons :branch "feat")
+                      (cons :stack
+                            (list (list (cons :index 0) (cons :pr 1)
+                                        (cons :smoke--branch "smoke/feat/01"))
+                                  (list (cons :index 1) (cons :pr 2)
+                                        (cons :smoke--branch "smoke/feat/02"))
+                                  (list (cons :index 2) (cons :pr 3)
+                                        (cons :smoke--branch "smoke/feat/03"))))))
+         (migrated (smoke::migrate-state state)))
+    (is (= 4 (cdr (assoc :branch--counter migrated))))))
+
+(test migrate-state-preserves-existing-counter
+  "Migration preserves counter when already present."
+  (let* ((state (list (cons :branch "feat")
+                      (cons :branch--counter 10)
+                      (cons :stack
+                            (list (list (cons :index 0) (cons :pr 1)
+                                        (cons :smoke--branch "smoke/feat/01"))))))
+         (migrated (smoke::migrate-state state)))
+    (is (= 10 (cdr (assoc :branch--counter migrated))))))
+
+(test next-branch-number-increments
+  "next-branch-number returns current value and increments."
+  (let ((state (smoke::init-state "feat")))
+    (is (= 1 (smoke::next-branch-number state)))
+    (is (= 2 (smoke::next-branch-number state)))
+    (is (= 3 (smoke::next-branch-number state)))
+    (is (= 4 (cdr (assoc :branch--counter state))))))
+
+(test build-state-from-reconciliation-preserves-counter
+  "build-state-from-reconciliation includes the counter."
+  (let* ((reconciled (list (list :commit (make-commit "a" "First")
+                                 :pr 10 :branch "smoke/feat/05"
+                                 :position 1)))
+         (state (smoke::build-state-from-reconciliation "feat" reconciled 7)))
+    (is (= 7 (cdr (assoc :branch--counter state))))))
+
+(test remove-merged-prs-preserves-counter
+  "remove-merged-prs-from-state preserves the counter."
+  (let* ((state (make-state-with-entries "feat"
+                  '((0 1 "smoke/feat/01")
+                    (1 2 "smoke/feat/02"))
+                  :counter 5))
+         (cleaned (smoke::remove-merged-prs-from-state state '(1))))
+    (is (= 5 (cdr (assoc :branch--counter cleaned))))))

@@ -45,10 +45,13 @@ Handles:
              (cons :smoke--branch smoke-branch))))))
 
 (defun migrate-state (state)
-  "Migrate all stack entries in STATE to index-based format."
+  "Migrate all stack entries in STATE to index-based format.
+Initializes branch_counter if missing."
   (let ((branch (cdr (assoc :branch state)))
-        (stack (cdr (assoc :stack state))))
+        (stack (cdr (assoc :stack state)))
+        (counter (cdr (assoc :branch--counter state))))
     (list (cons :branch branch)
+          (cons :branch--counter (or counter (1+ (length stack))))
           (cons :stack (loop for e in stack
                              for i from 0
                              collect (migrate-state-entry e branch i))))))
@@ -74,6 +77,8 @@ Handles:
       (format out "{~%")
       (format out "  \"branch\": ~S,~%"
               (cdr (assoc :branch state)))
+      (format out "  \"branch_counter\": ~D,~%"
+              (cdr (assoc :branch--counter state)))
       (format out "  \"stack\": [~%")
       (let ((stack (cdr (assoc :stack state))))
         (loop for entry in stack
@@ -93,13 +98,23 @@ Handles:
 (defun init-state (branch)
   "Create initial state for BRANCH."
   (list (cons :branch branch)
+        (cons :branch--counter 1)
         (cons :stack nil)))
+
+(defun next-branch-number (state)
+  "Return the next branch number from STATE and increment the counter.
+Mutates STATE in place."
+  (let ((cell (assoc :branch--counter state)))
+    (prog1 (cdr cell)
+      (setf (cdr cell) (1+ (cdr cell))))))
 
 (defun remove-merged-prs-from-state (state merged-pr-numbers)
   "Remove entries with PR numbers in MERGED-PR-NUMBERS from STATE."
   (let ((branch (cdr (assoc :branch state)))
+        (counter (cdr (assoc :branch--counter state)))
         (stack (cdr (assoc :stack state))))
     (list (cons :branch branch)
+          (cons :branch--counter counter)
           (cons :stack
                 (remove-if (lambda (e)
                              (member (cdr (assoc :pr e)) merged-pr-numbers))
@@ -128,9 +143,10 @@ Also returns as second value a list of orphaned state entries (unmatched)."
                     (subseq stack (length commits)))))
     (values results orphans)))
 
-(defun build-state-from-reconciliation (branch reconciled)
-  "Build a state alist from BRANCH name and RECONCILED results."
+(defun build-state-from-reconciliation (branch reconciled counter)
+  "Build a state alist from BRANCH name, RECONCILED results, and COUNTER."
   (list (cons :branch branch)
+        (cons :branch--counter counter)
         (cons :stack
               (loop for r in reconciled
                     for i from 0

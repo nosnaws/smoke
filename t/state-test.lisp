@@ -337,3 +337,35 @@
                   :counter 5))
          (cleaned (smoke::remove-merged-prs-from-state state '(1))))
     (is (= 5 (cdr (assoc :branch--counter cleaned))))))
+
+;;; commits-to-push
+
+(test commits-to-push-default-returns-first-only
+  "Without --all, only the first reconciled entry is returned."
+  (let* ((reconciled (list (list :commit (make-commit "a" "First")
+                                 :pr 10 :branch "smoke/feat/01")
+                           (list :commit (make-commit "b" "Second")
+                                 :pr 20 :branch "smoke/feat/02")
+                           (list :commit (make-commit "c" "Third")
+                                 :pr 30 :branch "smoke/feat/03")))
+         (result (smoke::commits-to-push reconciled nil)))
+    (is (= 1 (length result)))
+    (is (= 10 (getf (first result) :pr)))))
+
+(test commits-to-push-all-returns-everything
+  "With --all, all reconciled entries are returned."
+  (let* ((reconciled (list (list :commit (make-commit "a" "First")
+                                 :pr 10 :branch "smoke/feat/01")
+                           (list :commit (make-commit "b" "Second")
+                                 :pr 20 :branch "smoke/feat/02")
+                           (list :commit (make-commit "c" "Third")
+                                 :pr 30 :branch "smoke/feat/03")))
+         (result (smoke::commits-to-push reconciled t)))
+    (is (= 3 (length result)))
+    (is (= 10 (getf (first result) :pr)))
+    (is (= 30 (getf (third result) :pr)))))
+
+(test commits-to-push-empty-list
+  "Empty reconciled list returns nil in both modes."
+  (is (null (smoke::commits-to-push nil nil)))
+  (is (null (smoke::commits-to-push nil t))))

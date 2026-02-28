@@ -1,5 +1,14 @@
 (in-package :smoke)
 
+;;; Helpers
+
+(defun commits-to-push (reconciled all)
+  "Return the subset of RECONCILED to push.
+When ALL is true, return all entries. Otherwise return only the first."
+  (cond
+    (all reconciled)
+    (reconciled (list (first reconciled)))))
+
 ;;; Command implementations
 
 (defun status ()
@@ -36,8 +45,9 @@
                                (getf commit :subject))))
           (format t "~%")))))
 
-(defun push-stack ()
-  "Create or update PRs for each commit in the stack."
+(defun push-stack (&key all)
+  "Create or update PRs for each commit in the stack.
+When ALL is nil, only push the first commit. When ALL is true, push all commits."
   (ensure-clean-worktree)
   (let* ((branch (current-branch))
          (main (main-branch))
@@ -50,64 +60,66 @@
     (format t "Pushing stack of ~D commit~:P...~%~%" (length commits))
 
     (multiple-value-bind (reconciled orphans) (reconcile-stack commits state)
-      ;; For each reconciled commit, create a branch and PR
-      (loop for r in reconciled
-            for i from 0
-            for commit = (getf r :commit)
-            for existing-pr = (getf r :pr)
-            for branch-name = (or (getf r :branch)
-                                  (smoke-branch-name branch (next-branch-number state)))
-            do
-               ;; Store branch name back into reconciled result
-               (setf (getf r :branch) branch-name)
+      (let ((to-push (commits-to-push reconciled all)))
+        ;; For each commit to push, create a branch and PR
+        (loop for r in to-push
+              for i from 0
+              for commit = (getf r :commit)
+              for existing-pr = (getf r :pr)
+              for branch-name = (or (getf r :branch)
+                                    (smoke-branch-name branch (next-branch-number state)))
+              do
+                 ;; Store branch name back into reconciled result
+                 (setf (getf r :branch) branch-name)
 
-               ;; Create/update the branch pointing to this commit
-               (create-branch branch-name (getf commit :hash))
-               (safe-push-branch branch-name)
+                 ;; Create/update the branch pointing to this commit
+                 (create-branch branch-name (getf commit :hash))
+                 (safe-push-branch branch-name)
 
-               (let ((pr-st (when existing-pr (pr-state existing-pr))))
-                 (cond
-                   ;; PR exists and is open - just update
-                   ((eq pr-st :open)
-                    (format t "  ~A ~A  PR #~D (updated)~%"
-                            (getf commit :short)
-                            (getf commit :subject)
-                            existing-pr))
-
-                   ;; PR exists but is closed - try to reopen
-                   ((eq pr-st :closed)
-                    (format t "  ~A ~A  PR #~D (reopening)~%"
-                            (getf commit :short)
-                            (getf commit :subject)
-                            existing-pr)
-                    (handler-case
-                        (progn
-                          (gh-pr-reopen existing-pr)
-                          (format t "    Reopened~%"))
-                      (error ()
-                        (format t "    Could not reopen (may need manual intervention)~%"))))
-
-                   ;; No existing PR - create new
-                   (t
-                    (let* ((is-draft (> i 0))
-                           (pr-num (gh-pr-create-simple
-                                    (getf commit :subject)
-                                    main
-                                    branch-name
-                                    :draft is-draft)))
-                      (format t "  ~A ~A  PR #~D (created~A)~%"
+                 (let ((pr-st (when existing-pr (pr-state existing-pr))))
+                   (cond
+                     ;; PR exists and is open - just update
+                     ((eq pr-st :open)
+                      (format t "  ~A ~A  PR #~D (updated)~%"
                               (getf commit :short)
                               (getf commit :subject)
-                              pr-num
-                              (if is-draft ", draft" ""))
-                      (setf (getf r :pr) pr-num))))))
+                              existing-pr))
 
-      ;; Clean up orphan branches
-      (loop for orphan in orphans
-            for orphan-branch = (cdr (assoc :smoke--branch orphan))
-            when orphan-branch
-              do (format t "  Cleaning up orphan branch ~A~%" orphan-branch)
-                 (delete-remote-branch orphan-branch))
+                     ;; PR exists but is closed - try to reopen
+                     ((eq pr-st :closed)
+                      (format t "  ~A ~A  PR #~D (reopening)~%"
+                              (getf commit :short)
+                              (getf commit :subject)
+                              existing-pr)
+                      (handler-case
+                          (progn
+                            (gh-pr-reopen existing-pr)
+                            (format t "    Reopened~%"))
+                        (error ()
+                          (format t "    Could not reopen (may need manual intervention)~%"))))
+
+                     ;; No existing PR - create new
+                     (t
+                      (let* ((is-draft (> i 0))
+                             (pr-num (gh-pr-create-simple
+                                      (getf commit :subject)
+                                      main
+                                      branch-name
+                                      :draft is-draft)))
+                        (format t "  ~A ~A  PR #~D (created~A)~%"
+                                (getf commit :short)
+                                (getf commit :subject)
+                                pr-num
+                                (if is-draft ", draft" ""))
+                        (setf (getf r :pr) pr-num)))))))
+
+      ;; Clean up orphan branches (only when pushing all)
+      (when all
+        (loop for orphan in orphans
+              for orphan-branch = (cdr (assoc :smoke--branch orphan))
+              when orphan-branch
+                do (format t "  Cleaning up orphan branch ~A~%" orphan-branch)
+                   (delete-remote-branch orphan-branch)))
 
       ;; Build and save new state
       (let ((new-state (build-state-from-reconciliation

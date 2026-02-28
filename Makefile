@@ -91,7 +91,7 @@ help:
 	@echo ""
 	@echo "Development (runs via eval):"
 	@echo "  make status   - Show stack status"
-	@echo "  make push     - Create/update PRs"
+	@echo "  make push     - Create/update PR for first commit"
 	@echo "  make pull     - Rebase and update"
 	@echo "  make amend    - Interactive amend"
 	@echo "  make eval EXPR='(expr)' - Evaluate expression"

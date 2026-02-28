@@ -7,7 +7,7 @@
   (format t "smoke - manage stacked diffs with squash-merge workflows~%~%")
   (format t "Usage:~%")
   (format t "  smoke         Show stack status~%")
-  (format t "  smoke push    Create/update PRs for each commit~%")
+  (format t "  smoke push [--all]  Create/update PR for first commit (--all for entire stack)~%")
   (format t "  smoke pull    Rebase onto main, update PRs~%")
   (format t "  smoke amend   Pick a commit to amend~%")
   (format t "  smoke url [N] Show PR URL(s), optionally for stack position N~%")
@@ -21,7 +21,7 @@
           ((null args)
            (status))
           ((string= (first args) "push")
-           (push-stack))
+           (push-stack :all (member "--all" (rest args) :test #'string=)))
           ((string= (first args) "pull")
            (pull-stack))
           ((string= (first args) "amend")
@@ -52,9 +52,9 @@
   "Show status (for REPL use)."
   (status))
 
-(defun dev-push ()
+(defun dev-push (&key all)
   "Push stack (for REPL use)."
-  (push-stack))
+  (push-stack :all all))
 
 (defun dev-pull ()
   "Pull and rebase (for REPL use)."

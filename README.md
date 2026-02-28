@@ -13,7 +13,8 @@ This approach works seamlessly with squash-merge workflows where traditional sta
 | Command       | Action                                           |
 |---------------|--------------------------------------------------|
 | `smoke`       | Show stack status (commits, PRs, CI, draft state)|
-| `smoke push`  | Create/update PRs for each commit                |
+| `smoke push`  | Create/update PR for first commit                |
+| `smoke push --all` | Create/update PRs for entire stack          |
 | `smoke pull`  | Rebase onto main, update PRs, manage draft states|
 | `smoke amend` | Pick a commit to amend, then rebase stack        |
 

@@ -271,14 +271,9 @@ When ALL is nil, only push the first commit. When ALL is true, push all commits.
                                i (getf commit :short) (getf commit :subject))))))))
 
 (defun amend-stack ()
-  "Interactive amend: pick a commit to amend, then rebase."
-  (let ((commits (stack-commits)))
-    (when (null commits)
+  "Interactive rebase for amending commits in the stack."
+  (let ((base (merge-base (remote-main-branch))))
+    (when (string= base (run-git "rev-parse" "HEAD"))
       (format t "No commits in stack to amend.~%")
       (return-from amend-stack))
-
-    (let ((target (interactive-pick-commit commits)))
-      (format t "~%Opening editor to amend ~A...~%"
-              (getf target :short))
-      (format t "After saving, the stack will be rebased.~%~%")
-      (amend-commit target))))
+    (run-interactive-rebase base)))

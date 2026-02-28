@@ -369,3 +369,10 @@
   "Empty reconciled list returns nil in both modes."
   (is (null (smoke::commits-to-push nil nil)))
   (is (null (smoke::commits-to-push nil t))))
+
+;;; amend-stack
+
+(test amend-rebase-args-constructs-correct-command
+  "Rebase args should target the merge base directly."
+  (let ((args (smoke::amend-rebase-args "abc123")))
+    (is (equal '("git" "rebase" "-i" "--autosquash" "abc123") args))))

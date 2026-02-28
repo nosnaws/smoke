@@ -134,31 +134,13 @@ Signals REBASE-CONFLICT if the rebase encounters conflicts."
       (when groups
         (str:replace-all ".git" "" (aref groups 0))))))
 
-(defun interactive-pick-commit (commits)
-  "Let user pick a commit from COMMITS. Returns the selected commit plist."
-  (format t "~%Select a commit to amend:~%~%")
-  (loop for commit in commits
-        for i from 1
-        do (format t "  ~D. ~A ~A~%"
-                   i
-                   (getf commit :short)
-                   (getf commit :subject)))
-  (format t "~%Enter number (1-~D): " (length commits))
-  (finish-output)
-  (let ((choice (parse-integer (read-line) :junk-allowed t)))
-    (if (and choice (<= 1 choice (length commits)))
-        (nth (1- choice) commits)
-        (progn
-          (format t "Invalid choice.~%")
-          (interactive-pick-commit commits)))))
+(defun amend-rebase-args (base)
+  "Return the git rebase argument list for amending from BASE."
+  (list "git" "rebase" "-i" "--autosquash" base))
 
-(defun amend-commit (target-commit)
-  "Amend TARGET-COMMIT with current staged changes using interactive rebase."
-  (let ((target-hash (getf target-commit :hash)))
-    ;; Start interactive rebase with edit on target commit
-    (uiop:run-program
-     (list "git" "rebase" "-i" "--autosquash"
-           (format nil "~A^" target-hash))
-     :input :interactive
-     :output :interactive
-     :error-output :interactive)))
+(defun run-interactive-rebase (base)
+  "Launch interactive rebase from BASE."
+  (uiop:run-program (amend-rebase-args base)
+    :input :interactive
+    :output :interactive
+    :error-output :interactive))

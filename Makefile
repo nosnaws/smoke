@@ -93,5 +93,5 @@ help:
 	@echo "  make status   - Show stack status"
 	@echo "  make push     - Create/update PR for first commit"
 	@echo "  make pull     - Rebase and update"
-	@echo "  make amend    - Interactive amend"
+	@echo "  make amend    - Interactive rebase to amend stack"
 	@echo "  make eval EXPR='(expr)' - Evaluate expression"

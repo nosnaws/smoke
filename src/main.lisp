@@ -9,7 +9,7 @@
   (format t "  smoke         Show stack status~%")
   (format t "  smoke push [--all]  Create/update PR for first commit (--all for entire stack)~%")
   (format t "  smoke pull    Rebase onto main, update PRs~%")
-  (format t "  smoke amend   Pick a commit to amend~%")
+  (format t "  smoke amend   Interactive rebase to amend stack~%")
   (format t "  smoke url [N] Show PR URL(s), optionally for stack position N~%")
   (format t "  smoke help    Show this help~%"))
 
